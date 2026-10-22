@@ -7,6 +7,9 @@ products:
     name: Pokemon 30th Booster Bundle
     quantity: 2          # capped by what Lazada allows (this listing: limit 2 per person)
     # max_price: 45.00   # optional price cap; slower, since the bot must reload the page to check price
+  - url: https://www.lazada.sg/products/i13718919969-s124653053231.html
+    name: Pokemon Chaos Rising Sleeved Booster
+    quantity: 1          # listing allows up to 10 per person
   # - url: https://www.lazada.sg/products/...-i123-s456.html
   #   quantity: 1
 
