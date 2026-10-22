@@ -153,10 +153,14 @@ async def checkout(page: Page, quantity: int, max_qty: int | None, *,
     return await finish_checkout(page, place_order=place_order, pay=pay)
 
 
+def _tld(product_url: str) -> str:
+    host = urllib.parse.urlparse(product_url).hostname or "www.lazada.sg"
+    return host.split("lazada.", 1)[-1]
+
+
 def direct_checkout_url(product_url: str, item_id: str, sku_id: str, quantity: int) -> str:
     """The URL Buy Now leads to, so we can jump straight there without re-rendering the product page."""
-    host = urllib.parse.urlparse(product_url).hostname or "www.lazada.sg"
-    tld = host.split("lazada.", 1)[-1]
+    tld = _tld(product_url)
     buy = json.dumps({"items": [{"itemId": item_id, "skuId": sku_id, "quantity": quantity, "attributes": None}]},
                      separators=(",", ":"))
     return f"https://checkout.lazada.{tld}/shipping?buyParams={urllib.parse.quote(buy)}"
@@ -216,6 +220,33 @@ async def finish_checkout(page: Page, *, place_order: bool, pay: bool) -> str:
     except PWTimeout:
         # Card OTP / 3DS or e-wallet confirmation is in progress: user must finish.
         return CheckoutResult.AWAITING_PAYMENT
+
+
+async def warm_up(page: Page, product_url: str, first: bool) -> bool:
+    """Keep connections to the checkout servers open so the first checkout request
+    doesn't pay for DNS + TLS setup. Returns False if Lazada says we're logged out.
+
+    On the first call it opens the cart page (on the same login session as
+    checkout); after that it just pings the checkout host to keep sockets alive.
+    """
+    tld = _tld(product_url)
+    if first:
+        try:
+            await page.goto(f"https://cart.lazada.{tld}/cart", wait_until="domcontentloaded", timeout=20000)
+        except Exception:
+            pass
+    if "member.lazada" in page.url:
+        return False
+    try:
+        await page.evaluate(
+            """(urls) => Promise.all(urls.map(u => fetch(u, {mode: 'no-cors', credentials: 'include',
+                                                           cache: 'no-store'}).catch(() => null)))""",
+            [f"https://checkout.lazada.{tld}/", f"https://cart.lazada.{tld}/"],
+        )
+    except Exception:
+        # The page navigated mid-ping (typically a redirect to the login page).
+        await page.wait_for_load_state("domcontentloaded")
+    return "member.lazada" not in page.url
 
 
 # --- Fast stock polling -------------------------------------------------------

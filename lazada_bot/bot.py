@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import logging
 import random
+import urllib.parse
 from pathlib import Path
 
 from playwright.async_api import BrowserContext, Page, async_playwright
@@ -21,6 +22,12 @@ log = logging.getLogger("lazada_bot")
 # Results that mean "we got it (or the user is finishing it) - stop for today".
 DONE_RESULTS = {CheckoutResult.PLACED, CheckoutResult.AWAITING_PAYMENT, CheckoutResult.AT_CHECKOUT}
 LINGER_AFTER_WINDOW = dt.timedelta(minutes=15)  # keep tabs open so the user can finish payment
+WARM_INTERVAL_SECONDS = 45  # Chromium drops idle sockets after a few minutes; ping well inside that
+TRACKER_HOSTS = (
+    "google-analytics.com", "googletagmanager.com", "doubleclick.net", "googleadservices.com",
+    "googlesyndication.com", "facebook.net", "facebook.com", "analytics.tiktok.com", "criteo.com",
+    "criteo.net", "hotjar.com", "bing.com", "clarity.ms", "appsflyer.com", "adjust.com",
+)
 
 
 class State:
@@ -52,14 +59,24 @@ async def open_context(pw, cfg: Config, block_media: bool = True) -> BrowserCont
         viewport={"width": 1280, "height": 900},
     )
     if block_media:
-        # Product polling only needs the DOM; skipping images makes each reload much faster.
-        async def _route(route):
-            if route.request.resource_type in ("image", "media", "font"):
-                await route.abort()
-            else:
-                await route.continue_()
-        await ctx.route("**/*", _route)
+        await ctx.route("**/*", block_heavy)
     return ctx
+
+
+def is_blocked(url: str, resource_type: str) -> bool:
+    """Product polling and checkout only need the DOM; skipping images and
+    third-party trackers makes every page load faster. Lazada's own scripts
+    are left alone: checkout and its verification checks depend on them."""
+    host = urllib.parse.urlparse(url).hostname or ""
+    return resource_type in ("image", "media", "font") or any(
+        host == t or host.endswith("." + t) for t in TRACKER_HOSTS)
+
+
+async def block_heavy(route) -> None:
+    if is_blocked(route.request.url, route.request.resource_type):
+        await route.abort()
+    else:
+        await route.continue_()
 
 
 class Bot:
@@ -232,6 +249,24 @@ class Bot:
             await self._sleep_fast()
         return None
 
+    async def keep_warm(self, page: Page, until: dt.datetime) -> None:
+        """Background tab: keep checkout connections hot and spot a logged-out session early."""
+        url = self.cfg.products[0].url
+        first, warned = True, False
+        while self.now() < until:
+            try:
+                ok = await lazada.warm_up(page, url, first)
+                first = False
+                if not ok and not warned:
+                    self.notifier.send("You're logged out of Lazada - log in in the browser now "
+                                       "or checkout will fail.", urgent=True)
+                    warned = True
+                elif ok:
+                    warned = False
+            except Exception as exc:
+                log.debug("warm-up failed: %s", exc)
+            await asyncio.sleep(WARM_INTERVAL_SECONDS)
+
     async def run_window(self, start: dt.datetime, until: dt.datetime) -> None:
         wait = (start - self.now()).total_seconds()
         if wait > 0:
@@ -250,7 +285,9 @@ class Bot:
             ctx = await open_context(pw, self.cfg)
             try:
                 pages = [await ctx.new_page() for _ in todo]
+                warm = asyncio.create_task(self.keep_warm(await ctx.new_page(), until))
                 results = await asyncio.gather(*(self.monitor(pg, p, until) for pg, p in zip(pages, todo)))
+                warm.cancel()
                 if any(r in (CheckoutResult.AWAITING_PAYMENT, CheckoutResult.AT_CHECKOUT) for r in results):
                     log.info("Keeping the browser open %d min so you can finish payment.",
                              LINGER_AFTER_WINDOW.seconds // 60)

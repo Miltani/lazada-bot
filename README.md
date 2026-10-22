@@ -18,6 +18,10 @@ about once a second during the window.
    **Place Order** (and optionally **Pay Now**). If the direct link is refused it falls
    back to reloading the product page and clicking **Buy Now**.
    If fast mode isn't available on a page, it reloads every ~3s and clicks Buy Now instead.
+   Meanwhile a background tab keeps connections to Lazada's cart/checkout servers open
+   (pinged every 45s), so checkout doesn't wait on connection setup, and warns you
+   if your Lazada login has expired. All tabs skip images, fonts, video and third-party
+   ad/analytics trackers; Lazada's own scripts are left alone.
 5. It alerts you (terminal bell + optional Telegram) and leaves the browser open
    15 min so you can approve card OTP / e-wallet payment.
 6. Each product is bought at most once per day (tracked in `state.json`, so restarts don't double-buy).

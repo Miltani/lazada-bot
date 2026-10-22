@@ -10,7 +10,7 @@ import pytest
 from playwright.async_api import async_playwright
 
 from lazada_bot import lazada
-from lazada_bot.bot import Bot
+from lazada_bot.bot import Bot, is_blocked
 from lazada_bot.config import Config, Product, load
 from lazada_bot.lazada import CheckoutResult
 from lazada_bot.schedule import next_window
@@ -222,6 +222,44 @@ async def test_poll_api_reads_snapshot():
         assert snap.usable and snap.sku_id == "2" and snap.item_id == "1" and not snap.blocked
     finally:
         await browser.close(); await pw.stop()
+
+
+@pytest.mark.asyncio
+async def test_warm_up_pings_checkout_and_detects_logout():
+    seen = []
+
+    async def handle(route):
+        url = route.request.url
+        seen.append(url)
+        if url.startswith("https://cart.lazada.sg/cart"):
+            # Playwright can't fake an HTTP redirect on navigation, so redirect from script.
+            body = ("<script>location.replace('https://member.lazada.sg/user/login')</script>"
+                    if logged_out else "<html>cart</html>")
+            return await route.fulfill(status=200, content_type="text/html", body=body)
+        if "member.lazada.sg" in url:
+            return await route.fulfill(status=200, content_type="text/html", body="<html>login</html>")
+        return await route.fulfill(status=204, body="")
+
+    fake = FakeLazada(OUT_OF_STOCK)
+    fake.handle = handle
+    pw, browser, page = await _page(fake)
+    try:
+        logged_out = False
+        assert await lazada.warm_up(page, "https://s.lazada.sg/s.abc", first=True)
+        assert any(u.startswith("https://checkout.lazada.sg/") for u in seen)
+        logged_out = True
+        assert not await lazada.warm_up(page, PRODUCT_URL, first=True)
+    finally:
+        await browser.close(); await pw.stop()
+
+
+def test_tracker_and_media_blocking():
+    assert is_blocked("https://www.google-analytics.com/collect", "script")
+    assert is_blocked("https://connect.facebook.net/en_US/fbevents.js", "script")
+    assert is_blocked("https://img.lazcdn.com/x.jpg", "image")
+    assert not is_blocked("https://g.lazcdn.com/g/lzdfe/pdp.js", "script")
+    assert not is_blocked("https://checkout.lazada.sg/shipping", "document")
+    assert not is_blocked("https://notfacebook.com/x.js", "script")
 
 
 def test_direct_checkout_url():
