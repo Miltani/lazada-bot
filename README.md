@@ -2,8 +2,8 @@
 
 Watches one or more Lazada product listings every day between **1pm and 2pm (SGT)**
 and buys as soon as a listing comes back in stock. You don't need to know the exact
-drop time: each product gets its own browser tab that reloads every few seconds
-during the window.
+drop time: each product gets its own browser tab that checks Lazada's live stock
+about once a second during the window.
 
 ## How it works
 
@@ -57,7 +57,10 @@ Leave `run` going on a PC that stays awake (disable sleep). Ctrl+C to stop.
 |---|---|
 | `products` | list of `{url, quantity, max_price, name}`; short `s.lazada.sg` links work |
 | `window.start` / `window.end` | daily window, in `timezone` |
-| `poll_seconds` / `poll_jitter` | reload speed. Faster gets you in sooner but triggers captchas more often |
+| `fast_poll` / `fast_poll_seconds` | in-page stock API polling (default on, every 1s) |
+| `direct_checkout` | on restock, open the checkout URL directly instead of clicking Buy Now |
+| `page_refresh_minutes` | full reload interval in fast mode |
+| `poll_seconds` / `poll_jitter` | reload speed when fast mode is off/unavailable |
 | `auto_place_order` | click "Place Order" on checkout (default on) |
 | `auto_pay` | also click the final "Pay Now" (default off; card OTP still needs you) |
 | `max_price` | per product: don't buy if price is above this |

@@ -6,7 +6,7 @@ products:
   - url: https://s.lazada.sg/s.hazsX
     name: Pokemon 30th Booster Bundle
     quantity: 2          # capped by what Lazada allows (this listing: limit 2 per person)
-    max_price: 45.00     # optional: don't buy if the price is above this (scalper/price-hike guard)
+    # max_price: 45.00   # optional price cap; slower, since the bot must reload the page to check price
   # - url: https://www.lazada.sg/products/...-i123-s456.html
   #   quantity: 1
 
@@ -28,7 +28,7 @@ poll_seconds: 3          # full reload interval per tab
 poll_jitter: 1           # random +/- seconds so tabs don't reload in lockstep
 
 auto_place_order: true   # click "Place Order" on the checkout page
-auto_pay: false          # also click the final "Pay Now" (card OTP / e-wallet may still need you)
+auto_pay: true           # also click the final "Pay Now" (card OTP / e-wallet may still need you)
 
 headless: false          # keep the window visible so you can solve captchas / finish payment
 browser_channel:         # leave empty for bundled Chromium, or "chrome" to use installed Google Chrome
