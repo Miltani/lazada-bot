@@ -1,0 +1,33 @@
+# Copy to config.yaml and edit.
+
+# Products to watch. Short share links (s.lazada.sg/...) work too.
+# Each product gets its own browser tab and is bought at most once per day.
+products:
+  - url: https://s.lazada.sg/s.hazsX
+    name: Pokemon 30th Booster Bundle
+    quantity: 2          # capped by what Lazada allows (this listing: limit 2 per person)
+    max_price: 45.00     # optional: don't buy if the price is above this (scalper/price-hike guard)
+  # - url: https://www.lazada.sg/products/...-i123-s456.html
+  #   quantity: 1
+
+timezone: Asia/Singapore
+window:
+  start: "13:00"
+  end: "14:00"
+prewarm_minutes: 2       # start watching a little before the window opens
+
+poll_seconds: 3          # reload interval per tab. Lower = faster but more likely to hit captcha.
+poll_jitter: 1           # random +/- seconds so tabs don't reload in lockstep
+
+auto_place_order: true   # click "Place Order" on the checkout page
+auto_pay: false          # also click the final "Pay Now" (card OTP / e-wallet may still need you)
+
+headless: false          # keep the window visible so you can solve captchas / finish payment
+browser_channel:         # leave empty for bundled Chromium, or "chrome" to use installed Google Chrome
+profile_dir: browser-profile
+state_file: state.json
+
+# Optional phone alerts via a Telegram bot (create one with @BotFather).
+telegram:
+  bot_token:
+  chat_id:
