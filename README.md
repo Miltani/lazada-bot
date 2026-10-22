@@ -8,12 +8,19 @@ during the window.
 ## How it works
 
 1. You log in once in a real browser window. The session is saved in `browser-profile/`.
-2. Each day at 12:58 it opens a tab per product and reloads it every ~3s (±1s jitter).
-3. When **Buy Now** becomes clickable (quantity no longer "Out of stock"), it sets the
-   quantity, clicks **Buy Now**, then **Place Order** on checkout, and optionally **Pay Now**.
-4. It alerts you (terminal bell + optional Telegram) and leaves the browser open
+2. Each day at 12:58 it opens a tab per product and loads the product page once.
+3. **Fast mode** (default): instead of reloading, it re-runs the page's own live-stock
+   API call (`mtop.global.detail.web.getDetailInfo`) about every second. The page HTML is
+   a cached placeholder; this API is where Lazada's real stock comes from, so this is the
+   earliest a browser can see a restock. The page is fully reloaded every 5 min.
+4. The moment the stock data changes it jumps **straight to the checkout URL**
+   (what Buy Now would open), skipping the product page re-render, and clicks
+   **Place Order** (and optionally **Pay Now**). If the direct link is refused it falls
+   back to reloading the product page and clicking **Buy Now**.
+   If fast mode isn't available on a page, it reloads every ~3s and clicks Buy Now instead.
+5. It alerts you (terminal bell + optional Telegram) and leaves the browser open
    15 min so you can approve card OTP / e-wallet payment.
-5. Each product is bought at most once per day (tracked in `state.json`, so restarts don't double-buy).
+6. Each product is bought at most once per day (tracked in `state.json`, so restarts don't double-buy).
    At 2pm it closes the browser and sleeps until tomorrow.
 
 If Lazada shows a slider/captcha or logs you out, the bot **does not try to bypass it**.
@@ -58,9 +65,17 @@ Leave `run` going on a PC that stays awake (disable sleep). Ctrl+C to stop.
 
 ## Tips for winning drops
 
-- Run on a wired connection; keep the number of products modest (each is a tab).
-- Use a fast payment method with no extra steps (e.g. saved card / Lazada Wallet with balance).
-- Have your phone ready for OTP: the order is only reserved for a short time.
+Most of the race is decided after stock appears, at checkout and payment:
+
+- **Set `auto_pay: true`** and pay with **Lazada Wallet (topped up)** or another method with
+  no OTP. A card that needs 3-D Secure OTP adds 10–30s of you typing, which is where bots win.
+- Set your **default address** and make sure no voucher/insurance popup blocks checkout.
+- Leave `max_price` unset for the fastest path: with a price cap the bot must reload the
+  product page to check the price before buying.
+- Run `check` before 1pm: it should print `fast mode: OK`. If not, tell me the output.
+- Run on a wired connection, close other heavy apps, keep the product list short.
+- `fast_poll_seconds: 1` is a sensible default. Going below ~0.5s mostly buys you
+  Lazada's slider check, which stops you completely until you solve it.
 - Lazada's terms may restrict automated purchasing, and listings like
   "Limit 2 per person" are enforced server-side. Use at your own risk.
 

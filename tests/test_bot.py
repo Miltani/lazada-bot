@@ -1,7 +1,8 @@
 """Tests run against fake Lazada pages served through Playwright routing (no network)."""
-import asyncio
 import datetime as dt
+import json
 import os
+import urllib.parse
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -17,8 +18,17 @@ from lazada_bot.schedule import next_window
 SGT = ZoneInfo("Asia/Singapore")
 PRODUCT_URL = "https://www.lazada.sg/products/test-i1-s2.html"
 
+# Stand-in for the page's own Mtop client: the real one signs and sends
+# mtop.global.detail.web.getDetailInfo; this one fetches the fake API below.
+MTOP_STUB = """<script>
+window.__moduleData__ = {data: {root: {fields: {primaryKey: {itemId: "1", skuId: "2"}}}}};
+window.Mtop = {default: {request: (req, ok, fail) =>
+  fetch('https://www.lazada.sg/fake-mtop', {method: 'POST'}).then(r => r.text())
+    .then(t => ok({ret: ['SUCCESS::ok'], data: {module: t}})).catch(fail)}};
+</script>"""
+
 # Trimmed from the real lazada.sg page while the item was out of stock.
-OUT_OF_STOCK = """<html><body><h1>Pokemon Booster Bundle</h1>
+OUT_OF_STOCK = MTOP_STUB + """<html><body><h1>Pokemon Booster Bundle</h1>
 <div id="module_product_price_v2"><span class="pdp-v2-product-price-content-salePrice-amount">41.40</span></div>
 <div id="module_quantity-input"><a class="next-number-picker-handler next-number-picker-handler-up"></a>
 <input min="0" max="0" disabled value="0"><span class="quantity-content-warning ">Out of stock</span></div>
@@ -42,20 +52,39 @@ SUCCESS = "<html><body>Thank you</body></html>"
 CAPTCHA = '<html><body><div id="nc_1_wrapper">slide to verify</div></body></html>'
 
 
+def api_module(in_stock: bool) -> str:
+    sku = {"itemId": "1", "skuId": "2", "operation": {"disable": not in_stock, "text": "Add to Cart"},
+           "quantity": {"limit": {"max": 2 if in_stock else 0, "min": 1}}}
+    return json.dumps({"data": {"root": {"fields": {"skuInfos": {"2": sku}}}}})
+
+
 class FakeLazada:
-    def __init__(self, product_html):
+    def __init__(self, product_html, api_in_stock=lambda n: False, checkout_ok=True):
         self.product_html = product_html
+        self.api_in_stock = api_in_stock
+        self.checkout_ok = checkout_ok
         self.product_hits = 0
+        self.api_hits = 0
         self.checkout_qty = None
+        self.direct_checkout = False
 
     async def handle(self, route):
         url = route.request.url
+        if "/fake-mtop" in url:
+            self.api_hits += 1
+            return await route.fulfill(status=200, content_type="application/json",
+                                       body=api_module(self.api_in_stock(self.api_hits)))
         if "/products/" in url:
             self.product_hits += 1
             body = self.product_html(self.product_hits) if callable(self.product_html) else self.product_html
         elif "/shipping" in url:
-            self.checkout_qty = int(url.split("qty=")[1])
-            body = CHECKOUT
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+            if "buyParams" in q:
+                self.direct_checkout = True
+                self.checkout_qty = json.loads(q["buyParams"][0])["items"][0]["quantity"]
+            else:
+                self.checkout_qty = int(q["qty"][0])
+            body = CHECKOUT if self.checkout_ok else "<html><body>Item is out of stock</body></html>"
         elif "/payment" in url:
             body = PAYMENT
         elif "/success" in url:
@@ -74,14 +103,15 @@ async def _page(fake):
     return pw, browser, await ctx.new_page()
 
 
-def _cfg(tmp_path, **kw):
+def _cfg(tmp_path, fast=False, **kw):
     return Config(products=[Product(url=PRODUCT_URL, quantity=2, **kw)], poll_seconds=0.1, poll_jitter=0,
-                  auto_place_order=True, auto_pay=True, state_file=tmp_path / "state.json")
+                  fast_poll=fast, fast_poll_seconds=0.1, auto_place_order=True, auto_pay=True,
+                  state_file=tmp_path / "state.json")
 
 
 @pytest.mark.asyncio
 async def test_status_out_of_stock_vs_in_stock():
-    fake = FakeLazada(lambda n: OUT_OF_STOCK if n == 1 else IN_STOCK.format(price="41.40"))
+    fake = FakeLazada(lambda n: OUT_OF_STOCK if n == 1 else MTOP_STUB + IN_STOCK.format(price="41.40"))
     pw, browser, page = await _page(fake)
     try:
         st = await lazada.load_product(page, PRODUCT_URL)
@@ -106,7 +136,7 @@ async def test_captcha_detected():
 @pytest.mark.asyncio
 async def test_monitor_buys_after_restock(tmp_path):
     # Sold out for the first 3 reloads, then drops.
-    fake = FakeLazada(lambda n: OUT_OF_STOCK if n <= 3 else IN_STOCK.format(price="41.40"))
+    fake = FakeLazada(lambda n: OUT_OF_STOCK if n <= 3 else MTOP_STUB + IN_STOCK.format(price="41.40"))
     pw, browser, page = await _page(fake)
     try:
         bot = Bot(_cfg(tmp_path))
@@ -121,7 +151,7 @@ async def test_monitor_buys_after_restock(tmp_path):
 
 @pytest.mark.asyncio
 async def test_dry_run_stops_at_checkout(tmp_path):
-    fake = FakeLazada(IN_STOCK.format(price="41.40"))
+    fake = FakeLazada(MTOP_STUB + IN_STOCK.format(price="41.40"))
     pw, browser, page = await _page(fake)
     try:
         bot = Bot(_cfg(tmp_path), dry_run=True)
@@ -133,7 +163,7 @@ async def test_dry_run_stops_at_checkout(tmp_path):
 
 @pytest.mark.asyncio
 async def test_price_cap_skips_purchase(tmp_path):
-    fake = FakeLazada(IN_STOCK.format(price="99.00"))
+    fake = FakeLazada(MTOP_STUB + IN_STOCK.format(price="99.00"))
     pw, browser, page = await _page(fake)
     try:
         bot = Bot(_cfg(tmp_path, max_price=45))
@@ -141,6 +171,64 @@ async def test_price_cap_skips_purchase(tmp_path):
         assert result is None and fake.checkout_qty is None
     finally:
         await browser.close(); await pw.stop()
+
+
+@pytest.mark.asyncio
+async def test_fast_poll_buys_via_direct_checkout(tmp_path):
+    # Page always renders sold out; the stock API flips on its 5th call.
+    fake = FakeLazada(OUT_OF_STOCK, api_in_stock=lambda n: n >= 5)
+    pw, browser, page = await _page(fake)
+    try:
+        bot = Bot(_cfg(tmp_path, fast=True))
+        result = await bot.monitor(page, bot.cfg.products[0], bot.now() + dt.timedelta(seconds=30))
+        assert result == CheckoutResult.PLACED
+        assert fake.product_hits == 1, "fast mode should not reload the product page"
+        assert fake.direct_checkout and fake.checkout_qty == 2
+    finally:
+        await browser.close(); await pw.stop()
+
+
+@pytest.mark.asyncio
+async def test_fast_poll_falls_back_when_direct_checkout_rejected(tmp_path):
+    # API flips, direct checkout is refused, product page then shows Buy Now.
+    fake = FakeLazada(lambda n: OUT_OF_STOCK if n == 1 else MTOP_STUB + IN_STOCK.format(price="41.40"),
+                      api_in_stock=lambda n: n >= 3)
+    fake_direct = {"first": True}
+    orig = fake.handle
+
+    async def handle(route):
+        if "buyParams" in route.request.url and fake_direct.pop("first", False):
+            fake.direct_checkout = True
+            return await route.fulfill(status=200, content_type="text/html", body="<html>Sold out</html>")
+        return await orig(route)
+    fake.handle = handle
+    pw, browser, page = await _page(fake)
+    try:
+        bot = Bot(_cfg(tmp_path, fast=True))
+        result = await bot.monitor(page, bot.cfg.products[0], bot.now() + dt.timedelta(seconds=40))
+        assert result == CheckoutResult.PLACED and fake.direct_checkout
+        assert fake.checkout_qty == 2  # bought through the Buy Now button after fallback
+    finally:
+        await browser.close(); await pw.stop()
+
+
+@pytest.mark.asyncio
+async def test_poll_api_reads_snapshot():
+    fake = FakeLazada(OUT_OF_STOCK)
+    pw, browser, page = await _page(fake)
+    try:
+        await lazada.load_product(page, PRODUCT_URL)
+        snap = await lazada.poll_api(page)
+        assert snap.usable and snap.sku_id == "2" and snap.item_id == "1" and not snap.blocked
+    finally:
+        await browser.close(); await pw.stop()
+
+
+def test_direct_checkout_url():
+    url = lazada.direct_checkout_url("https://www.lazada.sg/products/x-i1-s2.html", "1", "2", 2)
+    assert url.startswith("https://checkout.lazada.sg/shipping?buyParams=")
+    params = json.loads(urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["buyParams"][0])
+    assert params["items"][0] == {"itemId": "1", "skuId": "2", "quantity": 2, "attributes": None}
 
 
 def test_next_window():

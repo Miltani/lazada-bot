@@ -16,7 +16,15 @@ window:
   end: "14:00"
 prewarm_minutes: 2       # start watching a little before the window opens
 
-poll_seconds: 3          # reload interval per tab. Lower = faster but more likely to hit captcha.
+# Fast mode: load the product page once, then re-run the page's own stock API call
+# every fast_poll_seconds (one small request instead of a full reload).
+fast_poll: true
+fast_poll_seconds: 1     # lower = earlier detection, but more likely to trigger Lazada's slider check
+page_refresh_minutes: 5  # full reload this often to keep the session fresh
+direct_checkout: true    # on restock, open checkout directly (skips re-rendering the product page)
+
+# Used when fast mode is off or unavailable on a page.
+poll_seconds: 3          # full reload interval per tab
 poll_jitter: 1           # random +/- seconds so tabs don't reload in lockstep
 
 auto_place_order: true   # click "Place Order" on the checkout page

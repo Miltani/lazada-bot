@@ -29,6 +29,10 @@ class Config:
     prewarm_minutes: int = 2          # open tabs / start polling this early
     poll_seconds: float = 3.0         # reload interval per product tab
     poll_jitter: float = 1.0          # +/- random seconds added to each poll
+    fast_poll: bool = True            # poll the stock API in-page instead of reloading
+    fast_poll_seconds: float = 1.0    # interval between stock API calls per product
+    page_refresh_minutes: float = 5   # full reload this often in fast mode (fresh session/baseline)
+    direct_checkout: bool = True      # on restock, jump straight to the checkout URL
     auto_place_order: bool = True     # click "Place Order" on the checkout page
     auto_pay: bool = False            # also click the final "Pay Now" button
     headless: bool = False
@@ -74,6 +78,10 @@ def load(path: str | Path) -> Config:
         prewarm_minutes=int(raw.get("prewarm_minutes", 2)),
         poll_seconds=float(raw.get("poll_seconds", 3.0)),
         poll_jitter=float(raw.get("poll_jitter", 1.0)),
+        fast_poll=bool(raw.get("fast_poll", True)),
+        fast_poll_seconds=float(raw.get("fast_poll_seconds", 1.0)),
+        page_refresh_minutes=float(raw.get("page_refresh_minutes", 5)),
+        direct_checkout=bool(raw.get("direct_checkout", True)),
         auto_place_order=bool(raw.get("auto_place_order", True)),
         auto_pay=bool(raw.get("auto_pay", False)),
         headless=bool(raw.get("headless", False)),
